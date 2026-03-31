@@ -4,54 +4,68 @@ import { supabase } from '../../../lib/supabase';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  // 1. 検索ワードを時間で回す（より広範囲に集めるため）
-  const keywords = ["Horror", "Obby", "Tycoon", "Anime", "Simulator", "Social", "Easy", "Hard", "Mystery", "Fun"];
-  const currentHour = new Date().getHours();
+  const keywords = ["Horror", "Obby", "Tycoon", "Anime", "Simulator", "Social", "Mystery", "Easy", "Parkour", "Survival"];
+  const currentHour = new Date().getUTCHours();
   const selectedKeyword = keywords[currentHour % keywords.length];
 
   try {
-    // 2. Robloxの「発見（Discover）」APIを使用（これなら検索結果が取れる可能性が高い）
-    const searchUrl = `https://games.roblox.com/v1/games/list?model.keyword=${encodeURIComponent(selectedKeyword)}&model.maxRows=50`;
-    const res = await fetch(searchUrl);
-    const result = await res.json();
+    // --- 1階：新規開拓 (Discovery) ---
+    const searchUrl = `https://games.roblox.com/v1/games/list?model.keyword=${encodeURIComponent(selectedKeyword)}&model.maxRows=30`;
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json();
 
-    if (!result.data || result.data.length === 0) {
-      return NextResponse.json({ message: "No games found", keyword: selectedKeyword });
+    if (searchData.data) {
+      for (const game of searchData.data) {
+        const uId = (game.universeId || game.UniverseId).toString();
+        // デフォルト名除外
+        if (game.name?.toLowerCase().includes("'s place") && (game.placeVisits || 0) < 10) continue;
+
+        await supabase.from('games').upsert({
+          universe_id: uId,
+          name: game.name,
+          root_place_id: game.rootPlaceId || game.RootPlaceId,
+          last_scanned_at: new Date().toISOString()
+        });
+      }
     }
 
-    let newSaved = 0;
-    for (const game of result.data) {
-      const uId = (game.universeId || game.UniverseId).toString();
-      const gameName = game.name || game.Name;
-      const visitCount = game.placeVisits || game.Visits || 0;
+    // --- 2階：定点観測 (Tracking) ---
+    // DBから「スキャンが古い順」に上位20件を取得
+    const { data: oldGames } = await supabase
+      .from('games')
+      .select('universe_id')
+      .order('last_scanned_at', { ascending: true })
+      .limit(20);
 
-      // 3. フィルタリング：デフォルト名 且つ 訪問数が少ないものは捨てる
-      if (gameName.toLowerCase().includes("'s place") && visitCount < 10) continue;
+    if (oldGames && oldGames.length > 0) {
+      const ids = oldGames.map(g => g.universe_id).join(',');
+      const detailRes = await fetch(`https://games.roblox.com/v1/games?universeIds=${ids}`);
+      const detailData = await detailRes.json();
 
-      // 4. gamesテーブルに保存（既存なら更新、新規なら挿入）
-      await supabase.from('games').upsert({
-        universe_id: uId,
-        name: gameName,
-        root_place_id: game.rootPlaceId || game.RootPlaceId,
-        last_scanned_at: new Date().toISOString()
-      });
+      if (detailData.data) {
+        for (const game of detailData.data) {
+          const uId = game.universeId.toString();
+          
+          // 最新数値をスナップショットに保存
+          await supabase.from('game_snapshots').insert({
+            universe_id: uId,
+            player_count: game.playing || 0,
+            visit_count: game.visits || 0,
+            favorited_count: 0
+          });
 
-      // 5. snapshotsテーブルに「今の瞬間」を記録
-      await supabase.from('game_snapshots').insert({
-        universe_id: uId,
-        player_count: game.playerCount || game.PlayerCount || 0,
-        visit_count: visitCount,
-        favorited_count: 0
-      });
-
-      newSaved++;
+          // 最終スキャン時刻を更新（これで「古い順」の列から外れる）
+          await supabase.from('games').update({ 
+            last_scanned_at: new Date().toISOString() 
+          }).eq('universe_id', uId);
+        }
+      }
     }
 
     return NextResponse.json({ 
       success: true, 
       keyword: selectedKeyword,
-      processed: result.data.length,
-      saved_or_updated: newSaved 
+      tracking_updated: oldGames?.length || 0 
     });
 
   } catch (error: any) {
