@@ -1,45 +1,35 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '../../../lib/supabase';
 
-export async function GET() {
-  // 1. テスト用のUniverse ID（後でループ処理に変更できます）
-  const universeId = "123456789"; // ここを実際のIDに変えると動きます
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: NextRequest) {
+  // テスト用：Robloxに実在するUniverse ID (例: 1530913181 - Work at a Pizza Place)
+  const universeId = "1530913181"; 
 
   try {
-    // 2. Roblox APIからデータを取得（例）
-    // 本来はここで fetch('https://games.roblox.com/v1/games?universeIds=...') を叩きます
-    const mockData = {
-      name: "Test Game",
-      playing: 0,
-      visits: 100,
-      favoritedCount: 50
-    };
+    // Roblox APIから実際のデータを取得
+    const res = await fetch(`https://games.roblox.com/v1/games?universeIds=${universeId}`);
+    const data = await res.json();
+    const gameData = data.data[0];
 
-    // 3. gamesテーブルに基本情報を保存 (upsert: なければ作成、あれば更新)
-    const { error: gameError } = await supabase
-      .from('games')
-      .upsert({
-        universe_id: universeId,
-        name: mockData.name,
-        root_place_id: 0, // 実際は取得した値を入れる
-        last_scanned_at: new Date().toISOString()
-      });
+    // gamesテーブルに保存
+    await supabase.from('games').upsert({
+      universe_id: universeId,
+      name: gameData.name,
+      root_place_id: gameData.rootPlaceId,
+      last_scanned_at: new Date().toISOString()
+    });
 
-    if (gameError) throw gameError;
+    // snapshot（今の数値）を保存
+    await supabase.from('game_snapshots').insert({
+      universe_id: universeId,
+      player_count: gameData.playing || 0,
+      visit_count: gameData.visits || 0,
+      favorited_count: 0 // APIの別エンドポイントが必要なため一旦0
+    });
 
-    // 4. game_snapshotsテーブルにその瞬間の数値を保存
-    const { error: statsError } = await supabase
-      .from('game_snapshots')
-      .insert({
-        universe_id: universeId,
-        player_count: mockData.playing,
-        visit_count: mockData.visits,
-        favorited_count: mockData.favoritedCount
-      });
-
-    if (statsError) throw statsError;
-
-    return NextResponse.json({ message: "Data saved successfully!" });
+    return NextResponse.json({ message: "Real data saved!", game: gameData.name });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
