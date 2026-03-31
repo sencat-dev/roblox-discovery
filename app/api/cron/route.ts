@@ -14,31 +14,33 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Game not found" });
     }
 
-    // ここを gameData に統一しました
     const gameData = data.data[0];
 
-    // Supabaseへの保存とエラー詳細の取得
-    const { error: dbError } = await supabase.from('games').upsert({
+    // 1. gamesテーブルに基本情報を保存 (upsert)
+    const { error: gameError } = await supabase.from('games').upsert({
       universe_id: universeId,
       name: gameData.name,
       root_place_id: gameData.rootPlaceId,
       last_scanned_at: new Date().toISOString()
     });
 
-    if (dbError) {
-      // 保存に失敗した場合、Supabaseが返してきたエラーをそのまま画面に出す
-      return NextResponse.json({ 
-        status: "Supabase Error", 
-        message: dbError.message, 
-        details: dbError.details,
-        hint: dbError.hint
-      });
-    }
+    if (gameError) throw new Error(`Games table: ${gameError.message}`);
+
+    // 2. game_snapshotsテーブルに「今の数値」を保存 (insert)
+    const { error: snapshotError } = await supabase.from('game_snapshots').insert({
+      universe_id: universeId,
+      player_count: gameData.playing || 0,
+      visit_count: gameData.visits || 0,
+      favorited_count: 0 // お気に入り数は別APIが必要なため一旦0
+    });
+
+    if (snapshotError) throw new Error(`Snapshots table: ${snapshotError.message}`);
 
     return NextResponse.json({ 
       success: true, 
-      message: "Successfully saved!", 
-      game: gameData.name 
+      message: "Both tables updated!", 
+      game: gameData.name,
+      players: gameData.playing
     });
 
   } catch (error: any) {
