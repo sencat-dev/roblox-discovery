@@ -1,12 +1,15 @@
 name: Hourly Roblox Scan
 on:
   schedule:
-    - cron: '0 * * * *' # 1時間に1回
-  workflow_dispatch:     # 手動実行ボタンを出す（テスト用）
+    - cron: '0 * * * *'
+  workflow_dispatch: 
 
 jobs:
   scan:
     runs-on: ubuntu-latest
+    env:
+      # Node 24を強制使用する設定を追加（警告対策）
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -14,14 +17,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24' # バージョンを24にアップ
 
       - name: Install dependencies
         run: npm install @supabase/supabase-js
 
       - name: Run Scanner
         env:
-          # Vercelの設定画面にある環境変数をここにも入れます（後述）
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
         run: node scanner.js
