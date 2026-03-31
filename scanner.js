@@ -10,38 +10,39 @@ async function run() {
   const currentHour = new Date().getUTCHours();
   
   let resultData = [];
-  let usedKeyword = "";
 
-  // 1. 成功するまでキーワードをずらして最大3回試行
   for (let i = 0; i < 3; i++) {
-    usedKeyword = keywords[(currentHour + i) % keywords.length];
+    const usedKeyword = keywords[(currentHour + i) % keywords.length];
     console.log(`Attempt ${i + 1}: Scanning for ${usedKeyword}...`);
 
     try {
-      const searchUrl = `https://games.roblox.com/v1/games/list?model.keyword=${encodeURIComponent(usedKeyword)}&model.maxRows=30`;
+      // エンドポイントを v2/games/search に変更し、余計な model. を排除
+      const searchUrl = `https://games.roblox.com/v2/games/search?keyword=${encodeURIComponent(usedKeyword)}&maxRows=30`;
+      
       const res = await fetch(searchUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        headers: { 
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        }
       });
       const result = await res.json();
 
+      // v2 APIは直下の .data に配列が入ります
       if (result.data && result.data.length > 0) {
         resultData = result.data;
         console.log(`✅ Success with "${usedKeyword}"! Found ${resultData.length} games.`);
-        break; // データが取れたらループ終了
+        break;
       } else {
-        console.log(`⚠️ No data for "${usedKeyword}".`);
+        console.log(`⚠️ No data for "${usedKeyword}". Response was:`, JSON.stringify(result));
       }
     } catch (e) {
-      console.log(`❌ Error fetching "${usedKeyword}":`, e.message);
+      console.log(`❌ Error:`, e.message);
     }
   }
 
-  if (resultData.length === 0) {
-    console.log("Could not fetch any data after 3 attempts.");
-    return;
-  }
+  if (resultData.length === 0) return;
 
-  // 2. Discovery: 新規ゲームの保存
+  // --- 保存処理 (ここは変更なし) ---
   for (const game of resultData) {
     const uId = (game.universeId || game.id).toString();
     await supabase.from('games').upsert({
@@ -52,13 +53,12 @@ async function run() {
     });
   }
 
-  // 3. Tracking: 既存ゲームの更新（これはキーワードに関係なく実行）
+  // --- Tracking処理 (universeIds指定版) ---
   const { data: oldGames } = await supabase.from('games').select('universe_id').order('last_scanned_at', { ascending: true }).limit(20);
   if (oldGames && oldGames.length > 0) {
     const ids = oldGames.map(g => g.universe_id).join(',');
     const detailRes = await fetch(`https://games.roblox.com/v1/games?universeIds=${ids}`);
     const detailData = await detailRes.json();
-    
     if (detailData.data) {
       for (const g of detailData.data) {
         await supabase.from('game_snapshots').insert({
@@ -66,7 +66,7 @@ async function run() {
           player_count: g.playing || 0,
           visit_count: g.visits || 0
         });
-        await supabase.from('games').update({ last_scanned_at: new Date().toISOString() }).eq('universe_id', uId);
+        await supabase.from('games').update({ last_scanned_at: new Date().toISOString() }).eq('universe_id', g.universeId.toString());
       }
       console.log(`Updated tracking for ${detailData.data.length} games.`);
     }
