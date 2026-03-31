@@ -24,21 +24,20 @@ export async function GET(request: NextRequest) {
     const game = data.data[0];
 
     // 【確認2】Supabaseへ保存を試みる
-    const { error: dbError } = await supabase.from('games').upsert({
-      universe_id: universeId,
-      name: game.name,
-      root_place_id: game.rootPlaceId,
-      last_scanned_at: new Date().toISOString()
-    });
+const { data: dbData, error: dbError } = await supabase.from('games').upsert({
+  universe_id: universeId,
+  name: gameData.name,
+  root_place_id: gameData.rootPlaceId,
+  last_scanned_at: new Date().toISOString()
+}).select(); // .select() をつけると結果を返してくれます
 
-    if (dbError) {
-      // 書き込みエラーがあれば詳細を表示
-      return NextResponse.json({ 
-        stage: "Supabase Write Error", 
-        message: dbError.message, 
-        detail: dbError.details 
-      }, { status: 500 });
-    }
+if (dbError) {
+  return NextResponse.json({ 
+    status: "Supabase Reject", 
+    error_detail: dbError.message, 
+    error_code: dbError.code 
+  });
+}
 
     // すべて成功した場合、取得したゲーム名を表示
     return NextResponse.json({ 
