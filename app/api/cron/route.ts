@@ -9,7 +9,8 @@ export async function GET(request: NextRequest) {
   const selectedSort = sortTypes[currentHour % sortTypes.length];
 
   try {
-    const searchUrl = `https://games.roblox.com/v1/games/sort?sortToken=&maxRows=30&sortOrder=Desc&sortType=${selectedSort}`;
+    // sortToken削除がポイント
+    const searchUrl = `https://games.roblox.com/v1/games/sort?maxRows=30&sortOrder=Desc&sortType=${selectedSort}`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -52,7 +53,6 @@ export async function GET(request: NextRequest) {
 
       if (!uId || !name) continue;
 
-      // デフォルト名除外
       if (name.toLowerCase().includes("'s place") && visits < 10) continue;
 
       await supabase.from('games').upsert({
