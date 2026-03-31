@@ -16,61 +16,56 @@ async function run() {
     console.log(`Attempt ${i + 1}: Scanning for ${usedKeyword}...`);
 
     try {
-      // エンドポイントを v2/games/search に変更し、余計な model. を排除
-      const searchUrl = `https://games.roblox.com/v2/games/search?keyword=${encodeURIComponent(usedKeyword)}&maxRows=30`;
+      // 【変更点】APIサーバーではなく、WEB本体の検索エンドポイントを叩く
+      const searchUrl = `https://www.roblox.com/catalog/browse/update?Keyword=${encodeURIComponent(usedKeyword)}&Category=9&MaxRows=30`;
       
       const res = await fetch(searchUrl, {
         headers: { 
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+          // ブラウザのふりを徹底する
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Referer': 'https://www.roblox.com/discover'
         }
       });
-      const result = await res.json();
+      
+      const text = await res.text();
+      let result;
+      try {
+          result = JSON.parse(text);
+      } catch(e) {
+          console.log("HTMLが返ってきました（ブロック）。中身の冒頭:", text.substring(0, 100));
+          continue;
+      }
 
-      // v2 APIは直下の .data に配列が入ります
-      if (result.data && result.data.length > 0) {
-        resultData = result.data;
-        console.log(`✅ Success with "${usedKeyword}"! Found ${resultData.length} games.`);
+      if (result && result.length > 0) {
+        resultData = result;
+        console.log(`✅ Success! Found ${resultData.length} games.`);
         break;
       } else {
-        console.log(`⚠️ No data for "${usedKeyword}". Response was:`, JSON.stringify(result));
+        console.log(`⚠️ No data. Response: ${text.substring(0, 100)}`);
       }
     } catch (e) {
       console.log(`❌ Error:`, e.message);
     }
   }
 
-  if (resultData.length === 0) return;
+  if (resultData.length === 0) {
+    console.log("全キーワードで全滅しました。");
+    return;
+  }
 
-  // --- 保存処理 (ここは変更なし) ---
+  // --- 保存処理 (取得データの形式に合わせて微調整) ---
   for (const game of resultData) {
-    const uId = (game.universeId || game.id).toString();
+    const uId = (game.UniverseId || game.universeId || game.id)?.toString();
+    if(!uId) continue;
     await supabase.from('games').upsert({
       universe_id: uId,
-      name: game.name || "Unknown",
-      root_place_id: game.rootPlaceId || game.id,
+      name: game.Name || game.name || "Unknown",
+      root_place_id: game.RootPlaceId || game.rootPlaceId || game.id,
       last_scanned_at: new Date().toISOString()
     });
   }
-
-  // --- Tracking処理 (universeIds指定版) ---
-  const { data: oldGames } = await supabase.from('games').select('universe_id').order('last_scanned_at', { ascending: true }).limit(20);
-  if (oldGames && oldGames.length > 0) {
-    const ids = oldGames.map(g => g.universe_id).join(',');
-    const detailRes = await fetch(`https://games.roblox.com/v1/games?universeIds=${ids}`);
-    const detailData = await detailRes.json();
-    if (detailData.data) {
-      for (const g of detailData.data) {
-        await supabase.from('game_snapshots').insert({
-          universe_id: g.universeId.toString(),
-          player_count: g.playing || 0,
-          visit_count: g.visits || 0
-        });
-        await supabase.from('games').update({ last_scanned_at: new Date().toISOString() }).eq('universe_id', g.universeId.toString());
-      }
-      console.log(`Updated tracking for ${detailData.data.length} games.`);
-    }
-  }
+  console.log("Supabaseへの保存が完了しました。");
 }
 
 run();
