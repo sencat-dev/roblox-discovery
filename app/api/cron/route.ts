@@ -4,86 +4,62 @@ import { supabase } from '../../../lib/supabase';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const sortTypes = ["MostEngaged", "TopRated", "Popular"];
-  const currentHour = new Date().getHours();
-  const selectedSort = sortTypes[currentHour % sortTypes.length];
+  // 確実にデータが取れることがわかっているUniverse IDのリスト（有名どころ）
+  // 今後、ここを自動で増やしていく仕組みを作ればOKです
+  const targetUniverseIds = [
+    "1530913181", // Work at a Pizza Place
+    "652415125",  // Jailbreak
+    "920587237",  // Adopt Me!
+    "2041310701", // Tower of Hell
+    "192800"      // Natural Disaster Survival
+    // ...あとでここを30個くらいに増やしましょう
+  ];
 
   try {
-    // sortToken削除がポイント
-    const searchUrl = `https://games.roblox.com/v1/games/sort?maxRows=30&sortOrder=Desc&sortType=${selectedSort}`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const res = await fetch(searchUrl, {
-      headers: {
-        'Accept': 'application/json'
-      },
-      signal: controller.signal,
-      cache: 'no-store'
+    // 複数のUniverse IDを一気に取得する「multiget」APIを使用
+    // これは検索APIより圧倒的に安定しています
+    const idsQuery = targetUniverseIds.join(',');
+    const url = `https://games.roblox.com/v1/games?universeIds=${idsQuery}`;
+    
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
     });
+    const result = await res.json();
 
-    clearTimeout(timeout);
-
-    if (!res.ok) {
-      const text = await res.text();
-      return NextResponse.json(
-        { error: `Roblox API error: ${res.status}`, body: text },
-        { status: 500 }
-      );
-    }
-
-    const data = await res.json();
-
-    if (!data.data || data.data.length === 0) {
-      return NextResponse.json({
-        message: "No data returned",
-        sortType: selectedSort,
-        raw: data
-      });
+    if (!result.data || result.data.length === 0) {
+      return NextResponse.json({ message: "Multiget API also failed", raw: result });
     }
 
     let savedCount = 0;
+    for (const game of result.data) {
+      const uId = game.universeId.toString();
 
-    for (const game of data.data) {
-      const uId = game.universeId;
-      const name = game.name || "";
-      const visits = game.placeVisits || 0;
-      const players = game.playerCount || 0;
-
-      if (!uId || !name) continue;
-
-      if (name.toLowerCase().includes("'s place") && visits < 10) continue;
-
+      // gamesテーブルの更新
       await supabase.from('games').upsert({
-        universe_id: uId.toString(),
-        name,
+        universe_id: uId,
+        name: game.name,
         root_place_id: game.rootPlaceId,
         last_scanned_at: new Date().toISOString()
       });
 
+      // 数値（スナップショット）の保存
       await supabase.from('game_snapshots').insert({
-        universe_id: uId.toString(),
-        player_count: players,
-        visit_count: visits,
-        favorited_count: game.favoritedCount || 0
+        universe_id: uId,
+        player_count: game.playing || 0,
+        visit_count: game.visits || 0,
+        favorited_count: 0
       });
 
       savedCount++;
     }
 
-    return NextResponse.json({
-      success: true,
-      sortType: selectedSort,
-      saved: savedCount
+    return NextResponse.json({ 
+      success: true, 
+      message: "Data collection successful via Multiget API",
+      saved: savedCount 
     });
 
   } catch (error: any) {
-    console.error("FETCH ERROR:", error);
-
-    return NextResponse.json(
-      { error: error.message || "fetch failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
