@@ -1,10 +1,27 @@
-name: Hourly API Call
+name: Hourly Roblox Scan
 on:
   schedule:
     - cron: '0 * * * *' # 1時間に1回
+  workflow_dispatch:     # 手動実行ボタンを出す（テスト用）
+
 jobs:
-  cron:
+  scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Call API
-        run: curl -s "https://roblox-discovery-hdj5p5k6f-sencat-devs-projects.vercel.app/api/cron"
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js
+
+      - name: Run Scanner
+        env:
+          # Vercelの設定画面にある環境変数をここにも入れます（後述）
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: node scanner.js
