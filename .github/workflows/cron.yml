@@ -1,0 +1,10 @@
+name: Hourly API Call
+on:
+  schedule:
+    - cron: '0 * * * *' # 1時間に1回
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call API
+        run: curl -s "https://あなたのVercelのURL/api/cron"
