@@ -7,4 +7,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Call API
-        run: curl -s "https://あなたのVercelのURL/api/cron"
+        run: curl -s "https://roblox-discovery-hdj5p5k6f-sencat-devs-projects.vercel.app/api/cron"
