@@ -4,88 +4,54 @@ import { supabase } from '../../../lib/supabase';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  // 【修正】これらは「Universe ID」として正しい数値です
-  const targetUniverseIds = [
-    "2324662457", // Brookhaven 🏠
-    "1530913181", // Work at a Pizza Place 🍕
-    "652415125",  // Jailbreak 🏎️
-    "920587237",  // Adopt Me! 🐶
-    "2041310701"  // Tower of Hell 🗼
-  ];
+  // 1. 検索ワードを時間で回す（より広範囲に集めるため）
+  const keywords = ["Horror", "Obby", "Tycoon", "Anime", "Simulator", "Social", "Easy", "Hard", "Mystery", "Fun"];
+  const currentHour = new Date().getHours();
+  const selectedKeyword = keywords[currentHour % keywords.length];
 
   try {
-    const idsQuery = targetUniverseIds.join(',');
-    const url = `https://games.roblox.com/v1/games?universeIds=${idsQuery}`;
-    
-    const res = await fetch(url);
+    // 2. Robloxの「発見（Discover）」APIを使用（これなら検索結果が取れる可能性が高い）
+    const searchUrl = `https://games.roblox.com/v1/games/list?model.keyword=${encodeURIComponent(selectedKeyword)}&model.maxRows=50`;
+    const res = await fetch(searchUrl);
     const result = await res.json();
 
-    // 取得できたデータがあるかログに出す
     if (!result.data || result.data.length === 0) {
-      return NextResponse.json({ message: "No data", raw: result });
+      return NextResponse.json({ message: "No games found", keyword: selectedKeyword });
     }
 
-let savedCount = 0;
-    const debugLogs = [];
-
+    let newSaved = 0;
     for (const game of result.data) {
-      // 大文字・小文字どちらのIDでも取得できるようにする
-      const rawId = game.universeId || game.UniverseId || game.id;
-      
-      if (!rawId) {
-        debugLogs.push(`Skipped: No ID found for ${game.name || 'Unknown'}`);
-        continue;
-      }
+      const uId = (game.universeId || game.UniverseId).toString();
+      const gameName = game.name || game.Name;
+      const visitCount = game.placeVisits || game.Visits || 0;
 
-      const uId = rawId.toString();
-      const gameName = game.name || game.Name || "Unknown";
+      // 3. フィルタリング：デフォルト名 且つ 訪問数が少ないものは捨てる
+      if (gameName.toLowerCase().includes("'s place") && visitCount < 10) continue;
 
-      // 1. gamesテーブル
-      const { error: err1 } = await supabase.from('games').upsert({
+      // 4. gamesテーブルに保存（既存なら更新、新規なら挿入）
+      await supabase.from('games').upsert({
         universe_id: uId,
         name: gameName,
         root_place_id: game.rootPlaceId || game.RootPlaceId,
         last_scanned_at: new Date().toISOString()
       });
 
-      if (err1) {
-        debugLogs.push(`Games Error (${uId}): ${err1.message}`);
-        continue;
-      }
-
-      // 2. snapshotsテーブル
-      const { error: err2 } = await supabase.from('game_snapshots').insert({
+      // 5. snapshotsテーブルに「今の瞬間」を記録
+      await supabase.from('game_snapshots').insert({
         universe_id: uId,
-        player_count: game.playing || game.PlayerCount || 0,
-        visit_count: game.visits || game.Visits || game.placeVisits || 0,
+        player_count: game.playerCount || game.PlayerCount || 0,
+        visit_count: visitCount,
         favorited_count: 0
       });
 
-      if (err2) {
-        debugLogs.push(`Snapshots Error (${uId}): ${err2.message}`);
-        continue;
-      }
-
-      savedCount++;
+      newSaved++;
     }
 
     return NextResponse.json({ 
       success: true, 
-      saved: savedCount,
-      debug: debugLogs, // なぜ保存されなかったかの理由がここに出ます
-      fetched: result.data.map((g: any) => g.name || g.Name)
-    });
-    return NextResponse.json({ 
-      success: true, 
-      saved: savedCount,
-      db_errors: errors, // ここにエラーが表示されます
-      fetched_games: result.data.map((g: any) => g.name)
-    });
-
-    return NextResponse.json({ 
-      success: true, 
-      saved: savedCount,
-      games: result.data.map((g: any) => g.name) // 取得できたゲーム名を表示
+      keyword: selectedKeyword,
+      processed: result.data.length,
+      saved_or_updated: newSaved 
     });
 
   } catch (error: any) {
