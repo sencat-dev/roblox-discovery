@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../../../lib/supabase';
 
 export async function GET() {
   // 1. テスト用のUniverse ID（後でループ処理に変更できます）
