@@ -4,66 +4,68 @@ import { supabase } from '../../../lib/supabase';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const keywords = ["new", "beta", "obby", "tycoon", "simulator", "update"];
+  const sortTypes = ["MostEngaged", "TopRated", "Popular"];
   const currentHour = new Date().getHours();
-  const selectedKeyword = keywords[currentHour % keywords.length];
+  const selectedSort = sortTypes[currentHour % sortTypes.length];
 
   try {
-    // 新着寄りの検索APIに変更
-    const searchUrl = `https://discover.roblox.com/v1/search/games?keyword=${encodeURIComponent(selectedKeyword)}&limit=30`;
+    const searchUrl = `https://games.roblox.com/v1/games/sort?sortToken=&maxRows=30&sortOrder=Desc&sortType=${selectedSort}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const res = await fetch(searchUrl, {
       headers: {
         'Accept': 'application/json'
       },
+      signal: controller.signal,
       cache: 'no-store'
     });
 
+    clearTimeout(timeout);
+
     if (!res.ok) {
+      const text = await res.text();
       return NextResponse.json(
-        { error: `Roblox API error: ${res.status}` },
+        { error: `Roblox API error: ${res.status}`, body: text },
         { status: 500 }
       );
     }
 
-    const searchData = await res.json();
+    const data = await res.json();
 
-    if (!searchData.data || searchData.data.length === 0) {
+    if (!data.data || data.data.length === 0) {
       return NextResponse.json({
         message: "No data returned",
-        keyword: selectedKeyword,
-        raw: searchData
+        sortType: selectedSort,
+        raw: data
       });
     }
 
     let savedCount = 0;
 
-    for (const game of searchData.data) {
+    for (const game of data.data) {
       const uId = game.universeId;
-      const gameName = game.name || "";
-      const visitCount = game.placeVisits || 0;
-      const playerCount = game.playerCount || 0;
+      const name = game.name || "";
+      const visits = game.placeVisits || 0;
+      const players = game.playerCount || 0;
 
-      // 必須チェック
-      if (!uId || !gameName) continue;
+      if (!uId || !name) continue;
 
       // デフォルト名除外
-      if (gameName.toLowerCase().includes("'s place") && visitCount < 10) continue;
-
-      // 新着っぽいフィルタ
-      if (visitCount > 5000 || playerCount > 100) continue;
+      if (name.toLowerCase().includes("'s place") && visits < 10) continue;
 
       await supabase.from('games').upsert({
         universe_id: uId.toString(),
-        name: gameName,
+        name,
         root_place_id: game.rootPlaceId,
         last_scanned_at: new Date().toISOString()
       });
 
       await supabase.from('game_snapshots').insert({
         universe_id: uId.toString(),
-        player_count: playerCount,
-        visit_count: visitCount,
+        player_count: players,
+        visit_count: visits,
         favorited_count: game.favoritedCount || 0
       });
 
@@ -72,13 +74,15 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      keyword: selectedKeyword,
+      sortType: selectedSort,
       saved: savedCount
     });
 
   } catch (error: any) {
+    console.error("FETCH ERROR:", error);
+
     return NextResponse.json(
-      { error: error.message },
+      { error: error.message || "fetch failed" },
       { status: 500 }
     );
   }
