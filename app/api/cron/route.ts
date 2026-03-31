@@ -25,33 +25,48 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: "No data", raw: result });
     }
 
-    let savedCount = 0;
-    for (const game of result.data) {
-      // データの存在チェックをより厳密に
-      if (!game || game.universeId === undefined) continue;
+let savedCount = 0;
+    const errors = []; // エラー蓄積用
 
+    for (const game of result.data) {
+      if (!game || !game.universeId) continue;
       const uId = game.universeId.toString();
 
-      // gamesテーブルへの保存
+      // 1. gamesテーブルへの保存（エラーを詳しく取得）
       const { error: err1 } = await supabase.from('games').upsert({
         universe_id: uId,
         name: game.name || "Unknown",
         root_place_id: game.rootPlaceId,
         last_scanned_at: new Date().toISOString()
       });
-      if (err1) console.error("Error games:", err1);
 
-      // snapshotsテーブルへの保存
+      if (err1) {
+        errors.push(`Games Table Error (${uId}): ${err1.message}`);
+        continue; // エラーがあれば次へ
+      }
+
+      // 2. snapshotsテーブルへの保存
       const { error: err2 } = await supabase.from('game_snapshots').insert({
         universe_id: uId,
         player_count: game.playing || 0,
         visit_count: game.visits || 0,
         favorited_count: 0
       });
-      if (err2) console.error("Error snapshots:", err2);
+
+      if (err2) {
+        errors.push(`Snapshots Table Error (${uId}): ${err2.message}`);
+        continue;
+      }
 
       savedCount++;
     }
+
+    return NextResponse.json({ 
+      success: true, 
+      saved: savedCount,
+      db_errors: errors, // ここにエラーが表示されます
+      fetched_games: result.data.map((g: any) => g.name)
+    });
 
     return NextResponse.json({ 
       success: true, 
